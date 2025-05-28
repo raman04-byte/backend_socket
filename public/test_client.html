@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Socket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .container {
+            display: flex;
+            gap: 20px;
+        }
+
+        .column {
+            flex: 1;
+        }
+
+        .user-card {
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 5px;
+        }
+
+        .user-card h3 {
+            margin-top: 0;
+        }
+
+        .video-container {
+            width: 100%;
+            background: #eee;
+            margin-bottom: 15px;
+            height: 200px;
+            border-radius: 5px;
+            position: relative;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 5px;
+        }
+
+        button {
+            padding: 8px 12px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            cursor: pointer;
+        }
+
+        .actions {
+            margin-top: 10px;
+        }
+
+        #callLog {
+            height: 150px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            overflow-y: auto;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .status {
+            margin-top: 5px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>WebRTC Socket Test</h1>
+
+    <div class="container">
+        <div class="column">
+            <div class="user-card">
+                <h3>User 1</h3>
+                <div>ID: <input type="text" id="user1Id" value="user1"></div>
+                <div class="status" id="user1Status">Status: Disconnected</div>
+                <div class="video-container">
+                    <video id="user1Video" autoplay muted></video>
+                </div>
+                <div class="actions">
+                    <button id="user1Connect">Connect</button>
+                    <button id="user1Call" disabled>Call User 2</button>
+                    <button id="user1Hangup" disabled>Hang Up</button>
+                    <button id="user1ScreenShare" disabled>Share Screen</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="column">
+            <div class="user-card">
+                <h3>User 2</h3>
+                <div>ID: <input type="text" id="user2Id" value="user2"></div>
+                <div class="status" id="user2Status">Status: Disconnected</div>
+                <div class="video-container">
+                    <video id="user2Video" autoplay muted></video>
+                </div>
+                <div class="actions">
+                    <button id="user2Connect">Connect</button>
+                    <button id="user2Call" disabled>Call User 1</button>
+                    <button id="user2Hangup" disabled>Hang Up</button>
+                    <button id="user2ScreenShare" disabled>Share Screen</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h3>Call Log</h3>
+    <div id="callLog"></div>
+
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script>
+        // Configuration
+        const socketUrl = 'http://localhost:3001';
+        const organizationId = 'test-org';
+
+        // DOM Elements
+        const user1Id = document.getElementById('user1Id');
+        const user2Id = document.getElementById('user2Id');
+        const user1Status = document.getElementById('user1Status');
+        const user2Status = document.getElementById('user2Status');
+        const user1Video = document.getElementById('user1Video');
+        const user2Video = document.getElementById('user2Video');
+        const user1Connect = document.getElementById('user1Connect');
+        const user2Connect = document.getElementById('user2Connect');
+        const user1Call = document.getElementById('user1Call');
+        const user2Call = document.getElementById('user2Call');
+        const user1Hangup = document.getElementById('user1Hangup');
+        const user2Hangup = document.getElementById('user2Hangup');
+        const user1ScreenShare = document.getElementById('user1ScreenShare');
+        const user2ScreenShare = document.getElementById('user2ScreenShare');
+        const callLog = document.getElementById('callLog');
+
+        // WebRTC Configuration
+        const peerConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
+        // State
+        let user1Socket = null;
+        let user2Socket = null;
+        let user1Stream = null;
+        let user2Stream = null;
+        let user1PeerConnection = null;
+        let user2PeerConnection = null;
+        let currentCallId = null;
+
+        // Helper Functions
+        function log(message) {
+            const logEntry = document.createElement('div');
+            logEntry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            callLog.appendChild(logEntry);
+            callLog.scrollTop = callLog.scrollHeight;
+            console.log(message);
+        }
+
+        // Connect user to socket
+        async function connectUser(userId, statusElement, callButton, hangupButton, screenShareButton) {
+            try {
+                const socket = io(socketUrl, {
+                    query: {
+                        callerId: userId,
+                        organizationId
+                    }
+                });
+
+                socket.on('connect', () => {
+                    statusElement.textContent = `Status: Connected (${userId})`;
+                    callButton.disabled = false;
+                    log(`${userId} connected to socket`);
+                });
+
+                socket.on('disconnect', () => {
+                    statusElement.textContent = `Status: Disconnected`;
+                    callButton.disabled = true;
+                    hangupButton.disabled = true;
+                    screenShareButton.disabled = true;
+                    log(`${userId} disconnected from socket`);
+                });
+
+                return socket;
+            } catch (error) {
+                log(`Error connecting ${userId}: ${error.message}`);
+                return null;
+            }
+        }
+
+        // Setup media stream
+        async function setupMediaStream(videoElement) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: true,
+                    video: true
+                });
+                videoElement.srcObject = stream;
+                return stream;
+            } catch (error) {
+                log(`Error getting media stream: ${error.message}`);
+                return null;
+            }
+        }
+
+        // Setup screen sharing stream
+        async function setupScreenShare(videoElement) {
+            try {
+                const stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true
+                });
+                videoElement.srcObject = stream;
+                return stream;
+            } catch (error) {
+                log(`Error getting screen share: ${error.message}`);
+                return null;
+            }
+        }
+
+        // Initialize User 1
+        user1Connect.addEventListener('click', async () => {
+            const userId = user1Id.value;
+            user1Socket = await connectUser(userId, user1Status, user1Call, user1Hangup, user1ScreenShare);
+            user1Stream = await setupMediaStream(user1Video);
+
+            // Set up event handlers for User 1
+            if (user1Socket) {
+                // Handle incoming call
+                user1Socket.on('newCall', async (data) => {
+                    log(`User 1 received call from ${data.callerId}`);
+                    currentCallId = data.callId;
+
+                    // Create peer connection
+                    user1PeerConnection = new RTCPeerConnection(peerConfig);
+
+                    // Add local stream tracks to peer connection
+                    user1Stream.getTracks().forEach(track => {
+                        user1PeerConnection.addTrack(track, user1Stream);
+                    });
+
+                    // Set remote description (offer)
+                    await user1PeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdpOffer));
+
+                    // Create answer
+                    const answer = await user1PeerConnection.createAnswer();
+                    await user1PeerConnection.setLocalDescription(answer);
+
+                    // Enable hang up button
+                    user1Hangup.disabled = false;
+                    user1ScreenShare.disabled = false;
+
+                    // Send answer
+                    user1Socket.emit('answerCall', {
+                        callerId: data.callerId,
+                        sdpAnswer: answer,
+                        callId: data.callId
+                    });
+
+                    // Handle ICE candidates
+                    user1PeerConnection.onicecandidate = (event) => {
+                        if (event.candidate) {
+                            user1Socket.emit('IceCandidate', {
+                                calleeId: data.callerId,
+                                iceCandidate: event.candidate
+                            });
+                        }
+                    };
+
+                    // Handle incoming tracks
+                    user1PeerConnection.ontrack = (event) => {
+                        log('User 1 received remote track');
+                        user2Video.srcObject = event.streams[0];
+                    };
+                });
+
+                // Handle call answered
+                user1Socket.on('callAnswered', async (data) => {
+                    log(`User 1 call answered by ${data.callee}`);
+
+                    // Set remote description (answer)
+                    await user1PeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdpAnswer));
+                });
+
+                // Handle call ended
+                user1Socket.on('callEnded', (data) => {
+                    log(`User 1 call ended by ${data.sender}, reason: ${data.reason}`);
+
+                    // Close peer connection
+                    if (user1PeerConnection) {
+                        user1PeerConnection.close();
+                        user1PeerConnection = null;
+                    }
+
+                    // Reset UI
+                    user1Hangup.disabled = true;
+                    user1ScreenShare.disabled = true;
+                    user2Video.srcObject = null;
+                    currentCallId = null;
+                });
+
+                // Handle ICE candidates
+                user1Socket.on('IceCandidate', async (data) => {
+                    if (user1PeerConnection && data.iceCandidate) {
+                        await user1PeerConnection.addIceCandidate(new RTCIceCandidate(data.iceCandidate));
+                    }
+                });
+
+                // Handle stream update
+                user1Socket.on('streamUpdated', async (data) => {
+                    log(`User 1 received stream update from ${data.sender}`);
+
+                    // Set remote description
+                    await user1PeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdpOffer));
+
+                    // Create answer
+                    const answer = await user1PeerConnection.createAnswer();
+                    await user1PeerConnection.setLocalDescription(answer);
+
+                    // Send answer
+                    user1Socket.emit('streamAnswer', {
+                        callerId: data.sender,
+                        sdpAnswer: answer
+                    });
+                });
+            }
+        });
+
+        // Initialize User 2
+        user2Connect.addEventListener('click', async () => {
+            const userId = user2Id.value;
+            user2Socket = await connectUser(userId, user2Status, user2Call, user2Hangup, user2ScreenShare);
+            user2Stream = await setupMediaStream(user2Video);
+
+            // Set up event handlers for User 2
+            if (user2Socket) {
+                // Handle incoming call
+                user2Socket.on('newCall', async (data) => {
+                    log(`User 2 received call from ${data.callerId}`);
+                    currentCallId = data.callId;
+
+                    // Create peer connection
+                    user2PeerConnection = new RTCPeerConnection(peerConfig);
+
+                    // Add local stream tracks to peer connection
+                    user2Stream.getTracks().forEach(track => {
+                        user2PeerConnection.addTrack(track, user2Stream);
+                    });
+
+                    // Set remote description (offer)
+                    await user2PeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdpOffer));
+
+                    // Create answer
+                    const answer = await user2PeerConnection.createAnswer();
+                    await user2PeerConnection.setLocalDescription(answer);
+
+                    // Enable hang up button
+                    user2Hangup.disabled = false;
+                    user2ScreenShare.disabled = false;
+
+                    // Send answer
+                    user2Socket.emit('answerCall', {
+                        callerId: data.callerId,
+                        sdpAnswer: answer,
+                        callId: data.callId
+                    });
+
+                    // Handle ICE candidates
+                    user2PeerConnection.onicecandidate = (event) => {
+                        if (event.candidate) {
+                            user2Socket.emit('IceCandidate', {
+                                calleeId: data.callerId,
+                                iceCandidate: event.candidate
+                            });
+                        }
+                    };
+
+                    // Handle incoming tracks
+                    user2PeerConnection.ontrack = (event) => {
+                        log('User 2 received remote track');
+                        user1Video.srcObject = event.streams[0];
+                    };
+                });
+
+                // Handle call answered
+                user2Socket.on('callAnswered', async (data) => {
+                    log(`User 2 call answered by ${data.callee}`);
+
+                    // Set remote description (answer)
+                    await user2PeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdpAnswer));
+                });
+
+                // Handle call ended
+                user2Socket.on('callEnded', (data) => {
+                    log(`User 2 call ended by ${data.sender}, reason: ${data.reason}`);
+
+                    // Close peer connection
+                    if (user2PeerConnection) {
+                        user2PeerConnection.close();
+                        user2PeerConnection = null;
+                    }
+
+                    // Reset UI
+                    user2Hangup.disabled = true;
+                    user2ScreenShare.disabled = true;
+                    user1Video.srcObject = null;
+                    currentCallId = null;
+                });
+
+                // Handle ICE candidates
+                user2Socket.on('IceCandidate', async (data) => {
+                    if (user2PeerConnection && data.iceCandidate) {
+                        await user2PeerConnection.addIceCandidate(new RTCIceCandidate(data.iceCandidate));
+                    }
+                });
+
+                // Handle stream update
+                user2Socket.on('streamUpdated', async (data) => {
+                    log(`User 2 received stream update from ${data.sender}`);
+
+                    // Set remote description
+                    await user2PeerConnection.setRemoteDescription(new RTCSessionDescription(data.sdpOffer));
+
+                    // Create answer
+                    const answer = await user2PeerConnection.createAnswer();
+                    await user2PeerConnection.setLocalDescription(answer);
+
+                    // Send answer
+                    user2Socket.emit('streamAnswer', {
+                        callerId: data.sender,
+                        sdpAnswer: answer
+                    });
+                });
+            }
+        });
+
+        // User 1 calls User 2
+        user1Call.addEventListener('click', async () => {
+            if (!user1Socket || !user1Stream) return;
+
+            const calleeId = user2Id.value;
+            log(`User 1 calling ${calleeId}`);
+
+            // Create peer connection
+            user1PeerConnection = new RTCPeerConnection(peerConfig);
+
+            // Add local stream tracks to peer connection
+            user1Stream.getTracks().forEach(track => {
+                user1PeerConnection.addTrack(track, user1Stream);
+            });
+
+            // Handle ICE candidates
+            user1PeerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    user1Socket.emit('IceCandidate', {
+                        calleeId,
+                        iceCandidate: event.candidate
+                    });
+                }
+            };
+
+            // Handle incoming tracks
+            user1PeerConnection.ontrack = (event) => {
+                log('User 1 received remote track');
+                user2Video.srcObject = event.streams[0];
+            };
+
+            // Create offer
+            const offer = await user1PeerConnection.createOffer();
+            await user1PeerConnection.setLocalDescription(offer);
+
+            // Send call request
+            user1Socket.emit('makeCall', {
+                calleeId,
+                sdpOffer: offer
+            });
+
+            // Enable hang up button
+            user1Hangup.disabled = false;
+        });
+
+        // User 2 calls User 1
+        user2Call.addEventListener('click', async () => {
+            if (!user2Socket || !user2Stream) return;
+
+            const calleeId = user1Id.value;
+            log(`User 2 calling ${calleeId}`);
+
+            // Create peer connection
+            user2PeerConnection = new RTCPeerConnection(peerConfig);
+
+            // Add local stream tracks to peer connection
+            user2Stream.getTracks().forEach(track => {
+                user2PeerConnection.addTrack(track, user2Stream);
+            });
+
+            // Handle ICE candidates
+            user2PeerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    user2Socket.emit('IceCandidate', {
+                        calleeId,
+                        iceCandidate: event.candidate
+                    });
+                }
+            };
+
+            // Handle incoming tracks
+            user2PeerConnection.ontrack = (event) => {
+                log('User 2 received remote track');
+                user1Video.srcObject = event.streams[0];
+            };
+
+            // Create offer
+            const offer = await user2PeerConnection.createOffer();
+            await user2PeerConnection.setLocalDescription(offer);
+
+            // Send call request
+            user2Socket.emit('makeCall', {
+                calleeId,
+                sdpOffer: offer
+            });
+
+            // Enable hang up button
+            user2Hangup.disabled = false;
+        });
+
+        // User 1 hangs up
+        user1Hangup.addEventListener('click', () => {
+            if (!user1Socket) return;
+
+            const calleeId = user2Id.value;
+            log(`User 1 ending call with ${calleeId}`);
+
+            // Send end call message
+            user1Socket.emit('endCall', {
+                calleeId,
+                reason: 'ended',
+                callId: currentCallId,
+                endTime: new Date().toISOString()
+            });
+
+            // Close peer connection
+            if (user1PeerConnection) {
+                user1PeerConnection.close();
+                user1PeerConnection = null;
+            }
+
+            // Reset UI
+            user1Hangup.disabled = true;
+            user1ScreenShare.disabled = true;
+            user2Video.srcObject = null;
+        });
+
+        // User 2 hangs up
+        user2Hangup.addEventListener('click', () => {
+            if (!user2Socket) return;
+
+            const calleeId = user1Id.value;
+            log(`User 2 ending call with ${calleeId}`);
+
+            // Send end call message
+            user2Socket.emit('endCall', {
+                calleeId,
+                reason: 'ended',
+                callId: currentCallId,
+                endTime: new Date().toISOString()
+            });
+
+            // Close peer connection
+            if (user2PeerConnection) {
+                user2PeerConnection.close();
+                user2PeerConnection = null;
+            }
+
+            // Reset UI
+            user2Hangup.disabled = true;
+            user2ScreenShare.disabled = true;
+            user1Video.srcObject = null;
+        });
+
+        // User 1 shares screen
+        user1ScreenShare.addEventListener('click', async () => {
+            if (!user1Socket || !user1PeerConnection) return;
+
+            try {
+                // Get screen sharing stream
+                const screenStream = await setupScreenShare(user1Video);
+
+                if (screenStream) {
+                    // Replace tracks in peer connection
+                    const senders = user1PeerConnection.getSenders();
+                    const videoSender = senders.find(sender => sender.track?.kind === 'video');
+
+                    if (videoSender) {
+                        videoSender.replaceTrack(screenStream.getVideoTracks()[0]);
+
+                        // Add event listener for when screen sharing ends
+                        screenStream.getVideoTracks()[0].addEventListener('ended', async () => {
+                            // Revert to camera
+                            const cameraStream = await setupMediaStream(user1Video);
+                            videoSender.replaceTrack(cameraStream.getVideoTracks()[0]);
+                            log('User 1 stopped screen sharing');
+                        });
+
+                        log('User 1 started screen sharing');
+                    }
+                }
+            } catch (error) {
+                log(`Error sharing screen: ${error.message}`);
+            }
+        });
+
+        // User 2 shares screen
+        user2ScreenShare.addEventListener('click', async () => {
+            if (!user2Socket || !user2PeerConnection) return;
+
+            try {
+                // Get screen sharing stream
+                const screenStream = await setupScreenShare(user2Video);
+
+                if (screenStream) {
+                    // Replace tracks in peer connection
+                    const senders = user2PeerConnection.getSenders();
+                    const videoSender = senders.find(sender => sender.track?.kind === 'video');
+
+                    if (videoSender) {
+                        videoSender.replaceTrack(screenStream.getVideoTracks()[0]);
+
+                        // Add event listener for when screen sharing ends
+                        screenStream.getVideoTracks()[0].addEventListener('ended', async () => {
+                            // Revert to camera
+                            const cameraStream = await setupMediaStream(user2Video);
+                            videoSender.replaceTrack(cameraStream.getVideoTracks()[0]);
+                            log('User 2 stopped screen sharing');
+                        });
+
+                        log('User 2 started screen sharing');
+                    }
+                }
+            } catch (error) {
+                log(`Error sharing screen: ${error.message}`);
+            }
+        });
+    </script>
+</body>
+
+</html>
