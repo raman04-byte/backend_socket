@@ -1,8 +1,8 @@
 import { Server } from 'socket.io';
 import { Server as HttpServer } from 'http';
-import { logger } from '../../utils/logger.js';
-import { WebRTCCallService } from './services/webrtc_call_service.js';
-import { connectToDatabase } from '../../utils/database.js';
+import { logger } from '../../utils/logger';
+import { WebRTCCallService } from './services/webrtc_call_service';
+import { connectToDatabase } from '../../utils/database';
 
 // Track active calls with a map of callId -> { callData } 
 const activeCallsMap = new Map();

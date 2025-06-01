@@ -1,21 +1,14 @@
-/**
- * WebRTC Socket Server
- * 
- * Main entry point for the WebRTC signaling server
- */
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createServer } from 'http';
-import { logger } from './utils/logger.js';
-import { formatSuccess } from './utils/response.js';
-import { initializeWebRTCServer } from './features/webrtc/socket-server.js';
-import webrtcRouter from './features/webrtc/routes/webrtc_route.js';
-import { errorHandler } from './middleware/errorHandler.js';
-import path from 'path';
+import { logger } from './utils/logger';
+import { formatSuccess } from './utils/response';
+import { initializeWebRTCServer } from './features/webrtc/socket-server';
+import webrtcRouter from './features/webrtc/routes/webrtc_route';
+import { errorHandler } from './middleware/errorHandler';
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
