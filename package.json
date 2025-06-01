@@ -1,7 +1,7 @@
 {
     "name": "backend_socket",
     "version": "1.0.0",
-    "description": "WebRTC socket server extracted from Master_NodeServer_API_Function",
+    "description": "WebRTC socket backend server",
     "main": "dist/main.js",
     "type": "module",
     "scripts": {
