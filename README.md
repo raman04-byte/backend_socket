@@ -1,6 +1,6 @@
 # WebRTC Socket Server
 
-A standalone WebRTC signaling server built with Socket.IO, extracted from the larger Master_NodeServer_API_Function project.
+A standalone WebRTC signaling server built with Socket.IO.
 
 ## Overview
 
